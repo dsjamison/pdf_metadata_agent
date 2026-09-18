@@ -29,3 +29,7 @@ Use `pytest` for tests under `tests/`, named `test_*.py`. Current tests cover sc
 ## Commit & Pull Request Guidelines
 
 Recent commits use short imperative subjects such as `Add ruff for linting and formatting; update documentation`. Keep commits focused. In pull requests, describe the behavior changed, note the tests and Ruff checks run, and mention any required provider configuration. Include a redacted JSON result when extraction output changes.
+
+## Code Map
+
+- `src` - application source
