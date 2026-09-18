@@ -5,8 +5,8 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import dotenv
-import pytest
 import pydantic_ai
+import pytest
 from pydantic import ValidationError
 from pydantic_ai import BinaryContent
 
@@ -17,7 +17,9 @@ def extraction_module(monkeypatch):
     monkeypatch.delenv("PDF_METADATA_MODEL", raising=False)
     monkeypatch.setattr(dotenv, "load_dotenv", lambda *_: False)
     script = Path(__file__).resolve().parents[1] / "pdf_metadata_agent.py"
-    spec = importlib.util.spec_from_file_location("pdf_metadata_extraction_script", script)
+    spec = importlib.util.spec_from_file_location(
+        "pdf_metadata_extraction_script", script
+    )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -87,7 +89,9 @@ def test_extract_metadata_sends_pdf_and_returns_output(extraction_module, tmp_pa
     assert prompt[1].media_type == "application/pdf"
 
 
-def test_extract_metadata_async_sends_pdf_and_returns_output(extraction_module, tmp_path):
+def test_extract_metadata_async_sends_pdf_and_returns_output(
+    extraction_module, tmp_path
+):
     pdf = tmp_path / "book.pdf"
     pdf.write_bytes(b"%PDF-1.4 async test")
     expected = extraction_module.BookMetadata(

@@ -8,14 +8,15 @@
 
 - `uv sync` creates the project environment and installs runtime and development dependencies.
 - `uv run pytest -q` runs the test suite without calling a model provider.
+- `uv run ruff check .` checks Python code; `uv run ruff format --check .` checks formatting.
 - `python pdf_metadata_agent.py /path/to/book.pdf` runs extraction and prints JSON. Set the selected provider's API key first, such as `ANTHROPIC_API_KEY` for the current model.
 - `uv build` builds the package declared in `pyproject.toml`. The installed `pdf-metadata-agent` command currently runs the scaffold in `src/`, not the extraction script.
 
-The project declares Python 3.13 or newer in `pyproject.toml`. No lint or format command is configured.
+The project declares Python 3.13 or newer in `pyproject.toml`.
 
 ## Coding Style & Naming Conventions
 
-Use four-space indentation, standard Python naming (`snake_case` for functions and modules, `PascalCase` for models), and type annotations for public functions. Keep metadata fields in `BookMetadata` and give optional fields explicit defaults. Match the existing short docstring style. Avoid committing API keys or PDFs that contain private material.
+Use four-space indentation, standard Python naming (`snake_case` for functions and modules, `PascalCase` for models), and type annotations for public functions. Format with `uv run ruff format .` and fix lint findings with `uv run ruff check .`. Keep metadata fields in `BookMetadata` and give optional fields explicit defaults. Match the existing short docstring style. Avoid committing API keys or PDFs that contain private material.
 
 ## Testing Guidelines
 

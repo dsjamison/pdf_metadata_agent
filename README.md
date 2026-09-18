@@ -93,6 +93,7 @@ print(meta.suggested_filename)
 ```python
 from pdf_metadata_agent import extract_metadata_async
 
+
 @app.post("/extract")
 async def extract(pdf_path: str):
     meta = await extract_metadata_async(Path(pdf_path))
@@ -119,6 +120,8 @@ Install the project and its development dependencies, then run the tests:
 ```bash
 uv sync
 uv run pytest -q
+uv run ruff check .
+uv run ruff format --check .
 ```
 
 Tests in `tests/test_pdf_metadata_agent.py` cover metadata validation and both
@@ -127,6 +130,7 @@ needed. Add focused `test_*.py` tests for behavior changes and run the suite
 before committing. Use a short, imperative commit subject such as
 `Add metadata validation tests`. In pull requests, summarize the change and
 list the tests run; include a redacted JSON example if the output changes.
+Run `uv run ruff format .` to apply formatting before the checks.
 
 ## Known limitations
 

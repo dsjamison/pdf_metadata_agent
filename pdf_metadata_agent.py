@@ -61,7 +61,7 @@ extraction_agent = Agent(
         "- Use the first author's last name only; append 'et_al' if there "
         "are 3+ authors, or 'and_Lastname2' if there are exactly 2.\n"
         "- Replace spaces in the title with underscores; strip characters "
-        "that are illegal in Windows/Linux filenames (\\ / : * ? \" < > |).\n"
+        'that are illegal in Windows/Linux filenames (\\ / : * ? " < > |).\n'
         "- Wrap the publication year in parentheses if known; omit the "
         "year segment entirely if unknown.\n"
         "- If authors are unknown, start the filename with the title."
