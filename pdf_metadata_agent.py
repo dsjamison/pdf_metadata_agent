@@ -22,13 +22,45 @@ from pathlib import Path
 from time import perf_counter
 
 from dotenv import load_dotenv
-from pypdf import PdfReader, PdfWriter
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent, BinaryContent
+from pypdf import PdfReader, PdfWriter
 
 load_dotenv(Path(__file__).with_name(".env"))
 
 DEFAULT_MODEL = "anthropic:claude-sonnet-4-6"
+DEFAULT_MAX_PAGES = 10
+
+
+def _max_pages() -> int:
+    raw = os.getenv("PDF_METADATA_MAX_PAGES", str(DEFAULT_MAX_PAGES))
+    try:
+        value = int(raw)
+    except ValueError:
+        raise ValueError(
+            f"PDF_METADATA_MAX_PAGES must be a positive integer, got {raw!r}"
+        ) from None
+    if value < 1:
+        raise ValueError(
+            f"PDF_METADATA_MAX_PAGES must be a positive integer, got {raw!r}"
+        )
+    return value
+
+
+def _pdf_payload(pdf_bytes: bytes) -> tuple[bytes, int]:
+    """Return the first N pages of a PDF plus its total page count.
+
+    Only the front matter is sent to the model; bibliographic metadata lives
+    on the title and copyright pages.
+    """
+    reader = PdfReader(BytesIO(pdf_bytes))
+    total_pages = len(reader.pages)
+    writer = PdfWriter()
+    for page in reader.pages[: _max_pages()]:
+        writer.add_page(page)
+    output = BytesIO()
+    writer.write(output)
+    return output.getvalue(), total_pages
 
 
 def _provider_and_model() -> tuple[str | None, str | None]:
@@ -214,8 +246,8 @@ extraction_agent = Agent(
         "Leave unknown bibliographic facts null rather than guessing. "
         "Use empty lists for missing subjects or keywords. "
         "Normalize ISBNs to digits only (strip dashes/spaces). "
-        "Original filename, file size, run time, token counts, provider, and "
-        "model are set by the application.\n\n"
+        "Original filename, file size, run time, token counts, page count, "
+        "provider, and model are set by the application.\n\n"
         "Also produce `suggested_filename`, a standardized filename (no "
         "extension) in the form 'Lastname_-_Title_(Year)'. Rules:\n"
         "- Use the first author's last name only; append 'et_al' if there "
@@ -248,11 +280,12 @@ def _rename_pdf(pdf_path: Path, suggested_filename: str) -> None:
 def extract_metadata(pdf_path: Path, *, rename: bool = False) -> BookMetadata:
     """Run the agent once on a single PDF and return validated metadata."""
     pdf_bytes = pdf_path.read_bytes()
+    send_bytes, total_pages = _pdf_payload(pdf_bytes)
     start = perf_counter()
     result = extraction_agent.run_sync(
         [
             "Extract full bibliographic metadata from this document.",
-            BinaryContent(data=pdf_bytes, media_type="application/pdf"),
+            BinaryContent(data=send_bytes, media_type="application/pdf"),
         ]
     )
     elapsed = perf_counter() - start
@@ -262,6 +295,7 @@ def extract_metadata(pdf_path: Path, *, rename: bool = False) -> BookMetadata:
     result.output.input_tokens = result.usage.input_tokens
     result.output.output_tokens = result.usage.output_tokens
     result.output.total_tokens = result.usage.total_tokens
+    result.output.page_count = total_pages
     result.output.provider, result.output.model = _provider_and_model()
     save_metadata(result.output)
     if rename:
@@ -274,11 +308,12 @@ async def extract_metadata_async(
 ) -> BookMetadata:
     """Async version — use this if you're calling it from FastAPI."""
     pdf_bytes = pdf_path.read_bytes()
+    send_bytes, total_pages = _pdf_payload(pdf_bytes)
     start = perf_counter()
     result = await extraction_agent.run(
         [
             "Extract full bibliographic metadata from this document.",
-            BinaryContent(data=pdf_bytes, media_type="application/pdf"),
+            BinaryContent(data=send_bytes, media_type="application/pdf"),
         ]
     )
     elapsed = perf_counter() - start
@@ -288,6 +323,7 @@ async def extract_metadata_async(
     result.output.input_tokens = result.usage.input_tokens
     result.output.output_tokens = result.usage.output_tokens
     result.output.total_tokens = result.usage.total_tokens
+    result.output.page_count = total_pages
     result.output.provider, result.output.model = _provider_and_model()
     save_metadata(result.output)
     if rename:

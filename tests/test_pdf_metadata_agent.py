@@ -2,6 +2,7 @@ import asyncio
 import importlib.util
 import json
 import sys
+from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -13,6 +14,17 @@ from pydantic import ValidationError
 from pydantic_ai import BinaryContent
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.usage import RunUsage
+from pypdf import PdfReader, PdfWriter
+
+
+def _write_sample_pdf(path: Path, pages: int = 1) -> bytes:
+    """Write a real multi-page PDF for tests; return the original bytes."""
+    writer = PdfWriter()
+    for _ in range(pages):
+        writer.add_blank_page(width=72, height=72)
+    with path.open("wb") as stream:
+        writer.write(stream)
+    return path.read_bytes()
 
 
 @pytest.fixture
@@ -113,7 +125,7 @@ def test_extract_metadata_sends_pdf_and_returns_output(
     extraction_module, tmp_path, monkeypatch
 ):
     pdf = tmp_path / "book.pdf"
-    pdf.write_bytes(b"%PDF-1.4 test")
+    _write_sample_pdf(pdf)
     expected = extraction_module.BookMetadata(
         title="A Book", confidence=0.8, suggested_filename="A_Book", file_size_bytes=999
     )
@@ -128,6 +140,7 @@ def test_extract_metadata_sends_pdf_and_returns_output(
 
     assert actual is expected
     assert actual.file_size_bytes == len(pdf.read_bytes())
+    assert actual.page_count == 1
     assert actual.original_filename == "book.pdf"
     assert actual.run_time_seconds == 2.5
     assert (actual.input_tokens, actual.output_tokens, actual.total_tokens) == (
@@ -138,7 +151,7 @@ def test_extract_metadata_sends_pdf_and_returns_output(
     prompt = extraction_module.extraction_agent.run_sync.call_args.args[0]
     assert prompt[0] == "Extract full bibliographic metadata from this document."
     assert isinstance(prompt[1], BinaryContent)
-    assert prompt[1].data == pdf.read_bytes()
+    assert len(PdfReader(BytesIO(prompt[1].data)).pages) == 1
     assert prompt[1].media_type == "application/pdf"
 
 
@@ -146,7 +159,7 @@ def test_extract_metadata_async_sends_pdf_and_returns_output(
     extraction_module, tmp_path, monkeypatch
 ):
     pdf = tmp_path / "book.pdf"
-    pdf.write_bytes(b"%PDF-1.4 async test")
+    _write_sample_pdf(pdf)
     expected = extraction_module.BookMetadata(
         title="A Book", confidence=0.8, suggested_filename="A_Book"
     )
@@ -172,14 +185,14 @@ def test_extract_metadata_async_sends_pdf_and_returns_output(
     )
     prompt = extraction_module.extraction_agent.run.call_args.args[0]
     assert isinstance(prompt[1], BinaryContent)
-    assert prompt[1].data == pdf.read_bytes()
+    assert len(PdfReader(BytesIO(prompt[1].data)).pages) == 1
     assert prompt[1].media_type == "application/pdf"
 
 
 @pytest.mark.parametrize("async_mode", [False, True])
 def test_rename_pdf_keeps_original_filename(extraction_module, tmp_path, async_mode):
     pdf = tmp_path / "original.pdf"
-    pdf.write_bytes(b"%PDF-1.4 test")
+    original = _write_sample_pdf(pdf)
     metadata = extraction_module.BookMetadata(
         title="A Book", confidence=0.8, suggested_filename="A_Book"
     )
@@ -194,12 +207,12 @@ def test_rename_pdf_keeps_original_filename(extraction_module, tmp_path, async_m
 
     assert actual.original_filename == "original.pdf"
     assert not pdf.exists()
-    assert (tmp_path / "A_Book.pdf").read_bytes() == b"%PDF-1.4 test"
+    assert (tmp_path / "A_Book.pdf").read_bytes() == original
 
 
 def test_rename_pdf_refuses_existing_destination(extraction_module, tmp_path):
     pdf = tmp_path / "original.pdf"
-    pdf.write_bytes(b"original")
+    original = _write_sample_pdf(pdf)
     destination = tmp_path / "A_Book.pdf"
     destination.write_bytes(b"existing")
     metadata = extraction_module.BookMetadata(
@@ -212,13 +225,13 @@ def test_rename_pdf_refuses_existing_destination(extraction_module, tmp_path):
     with pytest.raises(FileExistsError):
         extraction_module.extract_metadata(pdf, rename=True)
 
-    assert pdf.read_bytes() == b"original"
+    assert pdf.read_bytes() == original
     assert destination.read_bytes() == b"existing"
 
 
 def test_rename_pdf_rejects_path_components(extraction_module, tmp_path):
     pdf = tmp_path / "original.pdf"
-    pdf.write_bytes(b"original")
+    _write_sample_pdf(pdf)
     metadata = extraction_module.BookMetadata(
         title="A Book", confidence=0.8, suggested_filename="../elsewhere"
     )
@@ -295,7 +308,7 @@ def test_extract_metadata_records_provider_and_model(
 ):
     monkeypatch.setenv("PDF_METADATA_MODEL", configured_model)
     pdf = tmp_path / "book.pdf"
-    pdf.write_bytes(b"%PDF-1.4 test")
+    _write_sample_pdf(pdf)
     metadata = extraction_module.BookMetadata(
         title="A Book", confidence=0.8, suggested_filename="A_Book"
     )
@@ -349,7 +362,7 @@ def test_extract_metadata_saves_record_to_database(
 ):
     monkeypatch.setenv("PDF_METADATA_MODEL", "meta:muse-spark-1.3-contributor")
     pdf = tmp_path / "book.pdf"
-    pdf.write_bytes(b"%PDF-1.4 test")
+    _write_sample_pdf(pdf)
     metadata = extraction_module.BookMetadata(
         title="A Book", confidence=0.9, suggested_filename="A_Book"
     )
@@ -384,3 +397,59 @@ def test_cli_requires_pdf_path_without_list(extraction_module, monkeypatch):
 
     with pytest.raises(SystemExit):
         extraction_module.main()
+
+
+@pytest.mark.parametrize(
+    ("configured_pages", "expected_pages"),
+    [(None, 10), ("3", 3), ("25", 15)],
+)
+@pytest.mark.parametrize("async_mode", [False, True])
+def test_extract_sends_first_n_pages_and_total_count(
+    extraction_module,
+    tmp_path,
+    monkeypatch,
+    configured_pages,
+    expected_pages,
+    async_mode,
+):
+    if configured_pages is None:
+        monkeypatch.delenv("PDF_METADATA_MAX_PAGES", raising=False)
+    else:
+        monkeypatch.setenv("PDF_METADATA_MAX_PAGES", configured_pages)
+    pdf = tmp_path / "book.pdf"
+    original = _write_sample_pdf(pdf, pages=15)
+    metadata = extraction_module.BookMetadata(
+        title="A Book", confidence=0.8, suggested_filename="A_Book"
+    )
+    result = SimpleNamespace(output=metadata, usage=RunUsage())
+
+    if async_mode:
+        extraction_module.extraction_agent.run = AsyncMock(return_value=result)
+        actual = asyncio.run(extraction_module.extract_metadata_async(pdf))
+    else:
+        extraction_module.extraction_agent.run_sync = Mock(return_value=result)
+        actual = extraction_module.extract_metadata(pdf)
+
+    if async_mode:
+        prompt = extraction_module.extraction_agent.run.call_args.args[0]
+    else:
+        prompt = extraction_module.extraction_agent.run_sync.call_args.args[0]
+    assert len(PdfReader(BytesIO(prompt[1].data)).pages) == expected_pages
+    assert actual.page_count == 15
+    assert actual.file_size_bytes == len(original)
+
+
+@pytest.mark.parametrize("configured_pages", ["0", "-2", "abc"])
+def test_max_pages_rejects_non_positive_integers(
+    extraction_module, monkeypatch, configured_pages
+):
+    monkeypatch.setenv("PDF_METADATA_MAX_PAGES", configured_pages)
+
+    with pytest.raises(ValueError, match="PDF_METADATA_MAX_PAGES"):
+        extraction_module._max_pages()
+
+
+def test_max_pages_defaults_to_ten(extraction_module, monkeypatch):
+    monkeypatch.delenv("PDF_METADATA_MAX_PAGES", raising=False)
+
+    assert extraction_module._max_pages() == 10

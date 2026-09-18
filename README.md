@@ -91,6 +91,12 @@ all saved records as JSON:
 uv run python pdf_metadata_agent.py --list
 ```
 
+Only the first pages of the PDF are sent to the model (10 by default, set
+`PDF_METADATA_MAX_PAGES` to change it). Bibliographic metadata lives on the
+title and copyright pages, so the front matter is enough and large books stay
+under provider size limits. File size and page count are still measured from
+the full file.
+
 Run this from the repository root. The installed `pdf-metadata-agent` console
 command currently prints a scaffold greeting; use the script above for extraction.
 The script prints extracted metadata as formatted JSON:
@@ -193,10 +199,10 @@ JSON example if the output changes.
 
 ## Known limitations
 
-- **Large PDFs**: very large files sent inline can hit provider token/size
-  limits. For long books, consider sending only the first few pages, or
-  use `DocumentUrl` instead of `BinaryContent` if the file is hosted
-  somewhere reachable by the model provider.
+- **Large PDFs**: only the first `PDF_METADATA_MAX_PAGES` pages (default 10)
+  are sent inline, so long books usually fit. If a provider still rejects a
+  file, lower the limit, or use `DocumentUrl` instead of `BinaryContent` if
+  the file is hosted somewhere reachable by the model provider.
 - **Confidence is self-reported**: the `confidence` field is the model's
   own estimate, not a calibrated probability — treat it as a rough
   routing signal (e.g., "flag anything under 0.7 for manual review"),
