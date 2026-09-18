@@ -1,0 +1,24 @@
+[project]
+name = "pdf-metadata-agent"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Dave Jamison", email = "dave.jamison@peopletec.com" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "pydantic-ai>=2.45.0",
+]
+
+[project.scripts]
+pdf-metadata-agent = "pdf_metadata_agent:main"
+
+[build-system]
+requires = ["uv_build>=0.12.2,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest",
+]
