@@ -3,7 +3,7 @@
 A small [PydanticAI](https://ai.pydantic.dev/) agent that reads a PDF and
 returns validated, typed bibliographic metadata — title, authors, labeled ISBNs,
 subjects, summary, document type, and a standardized suggested filename. It
-also reports the PDF file size in bytes.
+also reports the PDF file size, model run time, and token usage.
 
 The PDF is sent to a multimodal LLM (Claude, GPT, Gemini, etc.) as raw
 bytes — there's no manual text extraction or regex parsing. PydanticAI
@@ -28,6 +28,11 @@ automatically if the output doesn't conform.
 | `summary`             | `str \| None`  | Brief description of the content             |
 | `document_type`       | `str \| None`  | e.g. book, article, white paper, magazine    |
 | `file_size_bytes`     | `int \| None`  | Measured from the input PDF after extraction |
+| `original_filename`   | `str \| None`  | Source PDF basename before any rename        |
+| `run_time_seconds`    | `float \| None` | Elapsed time for the model run                |
+| `input_tokens`        | `int \| None`  | Input tokens reported by PydanticAI          |
+| `output_tokens`       | `int \| None`  | Output tokens reported by PydanticAI         |
+| `total_tokens`        | `int \| None`  | Sum of input and output tokens               |
 | `confidence`           | `float`       | Agent's own confidence, `0.0`–`1.0`          |
 | `suggested_filename`    | `str`         | e.g. `Smith_-_Deep_Learning_(2023)`          |
 
@@ -66,6 +71,16 @@ cp .env.example .env
 uv run python pdf_metadata_agent.py /path/to/book.pdf
 ```
 
+To rename the PDF after extraction, add `--rename`:
+
+```bash
+uv run python pdf_metadata_agent.py /path/to/book.pdf --rename
+```
+
+The new name is the suggested basename plus the PDF's existing extension.
+Without `--rename`, the file is left in place. Renaming fails if the target
+filename already exists; it does not replace that file.
+
 Run this from the repository root. The installed `pdf-metadata-agent` console
 command currently prints a scaffold greeting; use the script above for extraction.
 The script prints extracted metadata as formatted JSON:
@@ -86,6 +101,11 @@ The script prints extracted metadata as formatted JSON:
   "summary": "An introduction to deep learning methods and applications.",
   "document_type": "book",
   "file_size_bytes": 12345678,
+  "original_filename": "book.pdf",
+  "run_time_seconds": 4.27,
+  "input_tokens": 2048,
+  "output_tokens": 256,
+  "total_tokens": 2304,
   "confidence": 0.95,
   "suggested_filename": "Goodfellow_et_al_-_Deep_Learning_(2016)"
 }
@@ -97,7 +117,7 @@ The script prints extracted metadata as formatted JSON:
 from pathlib import Path
 from pdf_metadata_agent import extract_metadata
 
-meta = extract_metadata(Path("book.pdf"))
+meta = extract_metadata(Path("book.pdf"))  # pass rename=True to rename the PDF
 print(meta.suggested_filename)
 ```
 
@@ -109,7 +129,7 @@ from pdf_metadata_agent import extract_metadata_async
 
 @app.post("/extract")
 async def extract(pdf_path: str):
-    meta = await extract_metadata_async(Path(pdf_path))
+    meta = await extract_metadata_async(Path(pdf_path), rename=False)
     return meta.model_dump()
 ```
 

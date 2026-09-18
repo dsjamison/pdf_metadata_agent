@@ -12,8 +12,10 @@ Requires an API key for whichever model you pick, e.g.:
     export ANTHROPIC_API_KEY=...
 """
 
+import argparse
 import os
 from pathlib import Path
+from time import perf_counter
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
@@ -48,6 +50,11 @@ class BookMetadata(BaseModel):
         default=None, description="e.g. book, article, white paper, magazine"
     )
     file_size_bytes: int | None = Field(default=None, ge=0)
+    original_filename: str | None = None
+    run_time_seconds: float | None = Field(default=None, ge=0)
+    input_tokens: int | None = Field(default=None, ge=0)
+    output_tokens: int | None = Field(default=None, ge=0)
+    total_tokens: int | None = Field(default=None, ge=0)
     confidence: float = Field(
         ge=0.0, le=1.0, description="Agent's own confidence in this extraction"
     )
@@ -73,7 +80,8 @@ extraction_agent = Agent(
         "Leave unknown bibliographic facts null rather than guessing. "
         "Use empty lists for missing subjects or keywords. "
         "Normalize ISBNs to digits only (strip dashes/spaces). "
-        "File size is set by the application from the PDF bytes.\n\n"
+        "Original filename, file size, run time, and token counts are set by "
+        "the application.\n\n"
         "Also produce `suggested_filename`, a standardized filename (no "
         "extension) in the form 'Lastname_-_Title_(Year)'. Rules:\n"
         "- Use the first author's last name only; append 'et_al' if there "
@@ -87,38 +95,78 @@ extraction_agent = Agent(
 )
 
 
-def extract_metadata(pdf_path: Path) -> BookMetadata:
+def _rename_pdf(pdf_path: Path, suggested_filename: str) -> None:
+    if (
+        not suggested_filename
+        or suggested_filename in {".", ".."}
+        or any(char in suggested_filename for char in ("/", "\\", "\0"))
+    ):
+        raise ValueError("Suggested filename must be a single nonempty basename")
+
+    destination = pdf_path.with_name(f"{suggested_filename}{pdf_path.suffix}")
+    if destination == pdf_path:
+        return
+    if destination.exists() or destination.is_symlink():
+        raise FileExistsError(f"Destination already exists: {destination}")
+    pdf_path.rename(destination)
+
+
+def extract_metadata(pdf_path: Path, *, rename: bool = False) -> BookMetadata:
     """Run the agent once on a single PDF and return validated metadata."""
     pdf_bytes = pdf_path.read_bytes()
+    start = perf_counter()
     result = extraction_agent.run_sync(
         [
             "Extract full bibliographic metadata from this document.",
             BinaryContent(data=pdf_bytes, media_type="application/pdf"),
         ]
     )
+    elapsed = perf_counter() - start
+    result.output.original_filename = pdf_path.name
     result.output.file_size_bytes = len(pdf_bytes)
+    result.output.run_time_seconds = elapsed
+    result.output.input_tokens = result.usage.input_tokens
+    result.output.output_tokens = result.usage.output_tokens
+    result.output.total_tokens = result.usage.total_tokens
+    if rename:
+        _rename_pdf(pdf_path, result.output.suggested_filename)
     return result.output  # already validated as BookMetadata
 
 
-async def extract_metadata_async(pdf_path: Path) -> BookMetadata:
+async def extract_metadata_async(
+    pdf_path: Path, *, rename: bool = False
+) -> BookMetadata:
     """Async version — use this if you're calling it from FastAPI."""
     pdf_bytes = pdf_path.read_bytes()
+    start = perf_counter()
     result = await extraction_agent.run(
         [
             "Extract full bibliographic metadata from this document.",
             BinaryContent(data=pdf_bytes, media_type="application/pdf"),
         ]
     )
+    elapsed = perf_counter() - start
+    result.output.original_filename = pdf_path.name
     result.output.file_size_bytes = len(pdf_bytes)
+    result.output.run_time_seconds = elapsed
+    result.output.input_tokens = result.usage.input_tokens
+    result.output.output_tokens = result.usage.output_tokens
+    result.output.total_tokens = result.usage.total_tokens
+    if rename:
+        _rename_pdf(pdf_path, result.output.suggested_filename)
     return result.output
 
 
-if __name__ == "__main__":
-    import sys
-
-    if len(sys.argv) != 2:
-        print("Usage: python pdf_metadata_agent.py <path-to-pdf>")
-        raise SystemExit(1)
-
-    meta = extract_metadata(Path(sys.argv[1]))
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Extract metadata from a PDF")
+    parser.add_argument("pdf_path", type=Path)
+    parser.add_argument(
+        "--rename", action="store_true", help="Rename the PDF to its suggested filename"
+    )
+    args = parser.parse_args()
+    meta = extract_metadata(args.pdf_path, rename=args.rename)
     print(meta.model_dump_json(indent=2))
+
+
+if __name__ == "__main__":
+    main()

@@ -9,7 +9,7 @@
 - `uv sync` creates the project environment and installs runtime and development dependencies.
 - `uv run pytest -q` runs the test suite without calling a model provider.
 - `uv run ruff check .` checks Python code; `uv run ruff format --check .` checks formatting.
-- `uv run python pdf_metadata_agent.py /path/to/book.pdf` extracts metadata and prints JSON. Configure `.env` first.
+- `uv run python pdf_metadata_agent.py /path/to/book.pdf` extracts metadata and prints JSON. Add `--rename` to rename the PDF to its suggested basename plus its original extension. Configure `.env` first.
 - `uv build` builds the package declared in `pyproject.toml`. The installed `pdf-metadata-agent` command currently runs the scaffold in `src/`, not the extraction script.
 
 The project declares Python 3.13 or newer in `pyproject.toml`.

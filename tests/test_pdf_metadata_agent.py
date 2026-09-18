@@ -1,5 +1,6 @@
 import asyncio
 import importlib.util
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -9,6 +10,7 @@ import pydantic_ai
 import pytest
 from pydantic import ValidationError
 from pydantic_ai import BinaryContent
+from pydantic_ai.usage import RunUsage
 
 
 @pytest.fixture
@@ -67,6 +69,9 @@ def test_book_metadata_defaults_and_confidence_bounds(extraction_module):
     assert metadata.summary is None
     assert metadata.document_type is None
     assert metadata.file_size_bytes is None
+    assert metadata.original_filename is None
+    assert metadata.run_time_seconds is None
+    assert metadata.total_tokens is None
 
     with pytest.raises(ValidationError):
         extraction_module.BookMetadata(
@@ -99,20 +104,32 @@ def test_isbn_formats_and_new_metadata_fields(extraction_module):
     assert metadata.document_type == "book"
 
 
-def test_extract_metadata_sends_pdf_and_returns_output(extraction_module, tmp_path):
+def test_extract_metadata_sends_pdf_and_returns_output(
+    extraction_module, tmp_path, monkeypatch
+):
     pdf = tmp_path / "book.pdf"
     pdf.write_bytes(b"%PDF-1.4 test")
     expected = extraction_module.BookMetadata(
         title="A Book", confidence=0.8, suggested_filename="A_Book", file_size_bytes=999
     )
+    monkeypatch.setattr(extraction_module, "perf_counter", Mock(side_effect=[10, 12.5]))
     extraction_module.extraction_agent.run_sync = Mock(
-        return_value=SimpleNamespace(output=expected)
+        return_value=SimpleNamespace(
+            output=expected, usage=RunUsage(input_tokens=30, output_tokens=12)
+        )
     )
 
     actual = extraction_module.extract_metadata(pdf)
 
     assert actual is expected
     assert actual.file_size_bytes == len(pdf.read_bytes())
+    assert actual.original_filename == "book.pdf"
+    assert actual.run_time_seconds == 2.5
+    assert (actual.input_tokens, actual.output_tokens, actual.total_tokens) == (
+        30,
+        12,
+        42,
+    )
     prompt = extraction_module.extraction_agent.run_sync.call_args.args[0]
     assert prompt[0] == "Extract full bibliographic metadata from this document."
     assert isinstance(prompt[1], BinaryContent)
@@ -121,22 +138,103 @@ def test_extract_metadata_sends_pdf_and_returns_output(extraction_module, tmp_pa
 
 
 def test_extract_metadata_async_sends_pdf_and_returns_output(
-    extraction_module, tmp_path
+    extraction_module, tmp_path, monkeypatch
 ):
     pdf = tmp_path / "book.pdf"
     pdf.write_bytes(b"%PDF-1.4 async test")
     expected = extraction_module.BookMetadata(
         title="A Book", confidence=0.8, suggested_filename="A_Book"
     )
+    monkeypatch.setattr(
+        extraction_module, "perf_counter", Mock(side_effect=[20, 21.25])
+    )
     extraction_module.extraction_agent.run = AsyncMock(
-        return_value=SimpleNamespace(output=expected)
+        return_value=SimpleNamespace(
+            output=expected, usage=RunUsage(input_tokens=8, output_tokens=4)
+        )
     )
 
     actual = asyncio.run(extraction_module.extract_metadata_async(pdf))
 
     assert actual is expected
     assert actual.file_size_bytes == len(pdf.read_bytes())
+    assert actual.original_filename == "book.pdf"
+    assert actual.run_time_seconds == 1.25
+    assert (actual.input_tokens, actual.output_tokens, actual.total_tokens) == (
+        8,
+        4,
+        12,
+    )
     prompt = extraction_module.extraction_agent.run.call_args.args[0]
     assert isinstance(prompt[1], BinaryContent)
     assert prompt[1].data == pdf.read_bytes()
     assert prompt[1].media_type == "application/pdf"
+
+
+@pytest.mark.parametrize("async_mode", [False, True])
+def test_rename_pdf_keeps_original_filename(extraction_module, tmp_path, async_mode):
+    pdf = tmp_path / "original.pdf"
+    pdf.write_bytes(b"%PDF-1.4 test")
+    metadata = extraction_module.BookMetadata(
+        title="A Book", confidence=0.8, suggested_filename="A_Book"
+    )
+    result = SimpleNamespace(output=metadata, usage=RunUsage())
+
+    if async_mode:
+        extraction_module.extraction_agent.run = AsyncMock(return_value=result)
+        actual = asyncio.run(extraction_module.extract_metadata_async(pdf, rename=True))
+    else:
+        extraction_module.extraction_agent.run_sync = Mock(return_value=result)
+        actual = extraction_module.extract_metadata(pdf, rename=True)
+
+    assert actual.original_filename == "original.pdf"
+    assert not pdf.exists()
+    assert (tmp_path / "A_Book.pdf").read_bytes() == b"%PDF-1.4 test"
+
+
+def test_rename_pdf_refuses_existing_destination(extraction_module, tmp_path):
+    pdf = tmp_path / "original.pdf"
+    pdf.write_bytes(b"original")
+    destination = tmp_path / "A_Book.pdf"
+    destination.write_bytes(b"existing")
+    metadata = extraction_module.BookMetadata(
+        title="A Book", confidence=0.8, suggested_filename="A_Book"
+    )
+    extraction_module.extraction_agent.run_sync = Mock(
+        return_value=SimpleNamespace(output=metadata, usage=RunUsage())
+    )
+
+    with pytest.raises(FileExistsError):
+        extraction_module.extract_metadata(pdf, rename=True)
+
+    assert pdf.read_bytes() == b"original"
+    assert destination.read_bytes() == b"existing"
+
+
+def test_rename_pdf_rejects_path_components(extraction_module, tmp_path):
+    pdf = tmp_path / "original.pdf"
+    pdf.write_bytes(b"original")
+    metadata = extraction_module.BookMetadata(
+        title="A Book", confidence=0.8, suggested_filename="../elsewhere"
+    )
+    extraction_module.extraction_agent.run_sync = Mock(
+        return_value=SimpleNamespace(output=metadata, usage=RunUsage())
+    )
+
+    with pytest.raises(ValueError, match="single nonempty basename"):
+        extraction_module.extract_metadata(pdf, rename=True)
+
+    assert pdf.exists()
+
+
+def test_cli_rename_flag(extraction_module, monkeypatch, capsys):
+    metadata = Mock()
+    metadata.model_dump_json.return_value = "{}"
+    extract = Mock(return_value=metadata)
+    monkeypatch.setattr(extraction_module, "extract_metadata", extract)
+    monkeypatch.setattr(sys, "argv", ["pdf_metadata_agent.py", "book.pdf", "--rename"])
+
+    extraction_module.main()
+
+    extract.assert_called_once_with(Path("book.pdf"), rename=True)
+    assert capsys.readouterr().out == "{}\n"
