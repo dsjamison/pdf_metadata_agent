@@ -62,6 +62,11 @@ def test_book_metadata_defaults_and_confidence_bounds(extraction_module):
     assert metadata.authors == []
     assert metadata.isbns == []
     assert metadata.subtitle is None
+    assert metadata.subjects == []
+    assert metadata.keywords == []
+    assert metadata.summary is None
+    assert metadata.document_type is None
+    assert metadata.file_size_bytes is None
 
     with pytest.raises(ValidationError):
         extraction_module.BookMetadata(
@@ -69,11 +74,36 @@ def test_book_metadata_defaults_and_confidence_bounds(extraction_module):
         )
 
 
+def test_isbn_formats_and_new_metadata_fields(extraction_module):
+    metadata = extraction_module.BookMetadata.model_validate(
+        {
+            "title": "A Book",
+            "isbns": [
+                {"value": "9780262035613", "format": "cloth"},
+                {"value": "9780262337373", "format": "EPUB"},
+            ],
+            "subjects": ["Machine learning"],
+            "keywords": ["neural networks"],
+            "summary": "An introduction to deep learning.",
+            "document_type": "book",
+            "confidence": 0.8,
+            "suggested_filename": "A_Book",
+        }
+    )
+
+    assert metadata.isbns[0].format == "cloth"
+    assert metadata.isbns[1].value == "9780262337373"
+    assert metadata.subjects == ["Machine learning"]
+    assert metadata.keywords == ["neural networks"]
+    assert metadata.summary == "An introduction to deep learning."
+    assert metadata.document_type == "book"
+
+
 def test_extract_metadata_sends_pdf_and_returns_output(extraction_module, tmp_path):
     pdf = tmp_path / "book.pdf"
     pdf.write_bytes(b"%PDF-1.4 test")
     expected = extraction_module.BookMetadata(
-        title="A Book", confidence=0.8, suggested_filename="A_Book"
+        title="A Book", confidence=0.8, suggested_filename="A_Book", file_size_bytes=999
     )
     extraction_module.extraction_agent.run_sync = Mock(
         return_value=SimpleNamespace(output=expected)
@@ -82,6 +112,7 @@ def test_extract_metadata_sends_pdf_and_returns_output(extraction_module, tmp_pa
     actual = extraction_module.extract_metadata(pdf)
 
     assert actual is expected
+    assert actual.file_size_bytes == len(pdf.read_bytes())
     prompt = extraction_module.extraction_agent.run_sync.call_args.args[0]
     assert prompt[0] == "Extract full bibliographic metadata from this document."
     assert isinstance(prompt[1], BinaryContent)
@@ -104,6 +135,7 @@ def test_extract_metadata_async_sends_pdf_and_returns_output(
     actual = asyncio.run(extraction_module.extract_metadata_async(pdf))
 
     assert actual is expected
+    assert actual.file_size_bytes == len(pdf.read_bytes())
     prompt = extraction_module.extraction_agent.run.call_args.args[0]
     assert isinstance(prompt[1], BinaryContent)
     assert prompt[1].data == pdf.read_bytes()

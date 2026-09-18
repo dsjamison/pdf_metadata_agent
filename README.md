@@ -1,8 +1,9 @@
 # PDF Metadata Extraction Agent
 
 A small [PydanticAI](https://ai.pydantic.dev/) agent that reads a PDF and
-returns validated, typed bibliographic metadata — title, authors, ISBNs,
-publisher, edition, and a standardized suggested filename.
+returns validated, typed bibliographic metadata — title, authors, labeled ISBNs,
+subjects, summary, document type, and a standardized suggested filename. It
+also reports the PDF file size in bytes.
 
 The PDF is sent to a multimodal LLM (Claude, GPT, Gemini, etc.) as raw
 bytes — there's no manual text extraction or regex parsing. PydanticAI
@@ -16,12 +17,17 @@ automatically if the output doesn't conform.
 | `title`               | `str`         | Required                                     |
 | `subtitle`             | `str \| None`  |                                              |
 | `authors`             | `list[str]`   |                                              |
-| `isbns`               | `list[str]`   | Digits only, dashes stripped                 |
+| `isbns`               | `list[ISBNEntry]` | Each has `value` (digits only) and optional `format`, such as cloth, ePDF, or EPUB |
 | `publisher`           | `str \| None`  |                                              |
 | `publication_date`     | `str \| None`  | e.g. `"2023"` or `"2023-05"`                 |
 | `edition`             | `str \| None`  |                                              |
 | `language`             | `str \| None`  |                                              |
 | `page_count`           | `int \| None`  |                                              |
+| `subjects`            | `list[str]`   | Document topics                              |
+| `keywords`            | `list[str]`   | Search terms found in the document           |
+| `summary`             | `str \| None`  | Brief description of the content             |
+| `document_type`       | `str \| None`  | e.g. book, article, white paper, magazine    |
+| `file_size_bytes`     | `int \| None`  | Measured from the input PDF after extraction |
 | `confidence`           | `float`       | Agent's own confidence, `0.0`–`1.0`          |
 | `suggested_filename`    | `str`         | e.g. `Smith_-_Deep_Learning_(2023)`          |
 
@@ -69,12 +75,17 @@ The script prints extracted metadata as formatted JSON:
   "title": "Deep Learning",
   "subtitle": null,
   "authors": ["Ian Goodfellow", "Yoshua Bengio", "Aaron Courville"],
-  "isbns": ["9780262035613"],
+  "isbns": [{"value": "9780262035613", "format": "cloth"}],
   "publisher": "MIT Press",
   "publication_date": "2016",
   "edition": null,
   "language": "en",
   "page_count": 800,
+  "subjects": ["Machine learning"],
+  "keywords": ["neural networks", "deep learning"],
+  "summary": "An introduction to deep learning methods and applications.",
+  "document_type": "book",
+  "file_size_bytes": 12345678,
   "confidence": 0.95,
   "suggested_filename": "Goodfellow_et_al_-_Deep_Learning_(2016)"
 }

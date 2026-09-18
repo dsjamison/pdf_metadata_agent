@@ -22,13 +22,18 @@ from pydantic_ai import Agent, BinaryContent
 load_dotenv(Path(__file__).with_name(".env"))
 
 
+class ISBNEntry(BaseModel):
+    value: str = Field(description="ISBN-10 or ISBN-13, digits only")
+    format: str | None = Field(
+        default=None, description="Labeled binding or format, e.g. cloth, ePDF, EPUB"
+    )
+
+
 class BookMetadata(BaseModel):
     title: str
     subtitle: str | None = None
     authors: list[str] = Field(default_factory=list)
-    isbns: list[str] = Field(
-        default_factory=list, description="All ISBN-10/ISBN-13 found, digits only"
-    )
+    isbns: list[ISBNEntry] = Field(default_factory=list)
     publisher: str | None = None
     publication_date: str | None = Field(
         default=None, description="Best available date, e.g. '2023' or '2023-05'"
@@ -36,6 +41,13 @@ class BookMetadata(BaseModel):
     edition: str | None = None
     language: str | None = None
     page_count: int | None = None
+    subjects: list[str] = Field(default_factory=list)
+    keywords: list[str] = Field(default_factory=list)
+    summary: str | None = None
+    document_type: str | None = Field(
+        default=None, description="e.g. book, article, white paper, magazine"
+    )
+    file_size_bytes: int | None = Field(default=None, ge=0)
     confidence: float = Field(
         ge=0.0, le=1.0, description="Agent's own confidence in this extraction"
     )
@@ -53,9 +65,15 @@ extraction_agent = Agent(
     system_prompt=(
         "You extract bibliographic metadata from book/document PDFs. "
         "Look at the title page, copyright page, and cover for ISBNs, "
-        "author names, publisher, and edition. If a field truly isn't "
-        "present anywhere in the document, leave it null rather than "
-        "guessing. Normalize ISBNs to digits only (strip dashes/spaces).\n\n"
+        "author names, publisher, and edition. Pair each ISBN with its labeled "
+        "binding or format (such as cloth, ePDF, or EPUB); leave the format "
+        "null if it is not stated. Extract subjects and keywords when present, "
+        "write a brief summary when the content supports one, and classify "
+        "the document type (such as book, article, white paper, or magazine). "
+        "Leave unknown bibliographic facts null rather than guessing. "
+        "Use empty lists for missing subjects or keywords. "
+        "Normalize ISBNs to digits only (strip dashes/spaces). "
+        "File size is set by the application from the PDF bytes.\n\n"
         "Also produce `suggested_filename`, a standardized filename (no "
         "extension) in the form 'Lastname_-_Title_(Year)'. Rules:\n"
         "- Use the first author's last name only; append 'et_al' if there "
@@ -78,6 +96,7 @@ def extract_metadata(pdf_path: Path) -> BookMetadata:
             BinaryContent(data=pdf_bytes, media_type="application/pdf"),
         ]
     )
+    result.output.file_size_bytes = len(pdf_bytes)
     return result.output  # already validated as BookMetadata
 
 
@@ -90,6 +109,7 @@ async def extract_metadata_async(pdf_path: Path) -> BookMetadata:
             BinaryContent(data=pdf_bytes, media_type="application/pdf"),
         ]
     )
+    result.output.file_size_bytes = len(pdf_bytes)
     return result.output
 
 
