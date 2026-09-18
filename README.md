@@ -57,10 +57,12 @@ cp .env.example .env
 ### Command line
 
 ```bash
-python pdf_metadata_agent.py /path/to/book.pdf
+uv run python pdf_metadata_agent.py /path/to/book.pdf
 ```
 
-Prints the extracted metadata as formatted JSON:
+Run this from the repository root. The installed `pdf-metadata-agent` console
+command currently prints a scaffold greeting; use the script above for extraction.
+The script prints extracted metadata as formatted JSON:
 
 ```json
 {
@@ -124,13 +126,14 @@ uv run ruff check .
 uv run ruff format --check .
 ```
 
-Tests in `tests/test_pdf_metadata_agent.py` cover metadata validation and both
-extraction functions. They mock model calls, so no API key or PDF fixture is
-needed. Add focused `test_*.py` tests for behavior changes and run the suite
-before committing. Use a short, imperative commit subject such as
-`Add metadata validation tests`. In pull requests, summarize the change and
-list the tests run; include a redacted JSON example if the output changes.
-Run `uv run ruff format .` to apply formatting before the checks.
+Tests in `tests/test_pdf_metadata_agent.py` cover metadata validation, `.env`
+model selection and environment precedence, and both extraction functions.
+They mock model calls, so no API key or PDF fixture is needed. Add focused
+`test_*.py` tests for behavior changes. Run `uv run ruff format .` to apply
+formatting, then run the checks above before committing. Use a short,
+imperative commit subject such as `Add metadata validation tests`. In pull
+requests, summarize the change and list the checks run; include a redacted
+JSON example if the output changes.
 
 ## Known limitations
 

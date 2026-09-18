@@ -9,19 +9,23 @@
 - `uv sync` creates the project environment and installs runtime and development dependencies.
 - `uv run pytest -q` runs the test suite without calling a model provider.
 - `uv run ruff check .` checks Python code; `uv run ruff format --check .` checks formatting.
-- `python pdf_metadata_agent.py /path/to/book.pdf` runs extraction and prints JSON. Set the selected provider's API key first, such as `ANTHROPIC_API_KEY` for the current model.
+- `uv run python pdf_metadata_agent.py /path/to/book.pdf` extracts metadata and prints JSON. Configure `.env` first.
 - `uv build` builds the package declared in `pyproject.toml`. The installed `pdf-metadata-agent` command currently runs the scaffold in `src/`, not the extraction script.
 
 The project declares Python 3.13 or newer in `pyproject.toml`.
 
 ## Coding Style & Naming Conventions
 
-Use four-space indentation, standard Python naming (`snake_case` for functions and modules, `PascalCase` for models), and type annotations for public functions. Format with `uv run ruff format .` and fix lint findings with `uv run ruff check .`. Keep metadata fields in `BookMetadata` and give optional fields explicit defaults. Match the existing short docstring style. Avoid committing API keys or PDFs that contain private material.
+Use four-space indentation, standard Python naming (`snake_case` for functions and modules, `PascalCase` for models), and type annotations for public functions. Format with `uv run ruff format .` and fix lint findings with `uv run ruff check .`. Ruff targets Python 3.13 and checks common errors and import order. Keep metadata fields in `BookMetadata` and give optional fields explicit defaults.
+
+## Configuration & Secrets
+
+Copy `.env.example` to `.env`. Set `PDF_METADATA_MODEL` to a PydanticAI model string and fill in its provider key: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `GOOGLE_API_KEY`. The script loads `.env` beside itself; exported environment variables take precedence. `.env` is Git-ignored. Never commit keys or private PDFs.
 
 ## Testing Guidelines
 
-Use `pytest` for tests under `tests/`, named `test_*.py`. Cover schema validation and both sync and async extraction paths when changing them. Stub agent responses so routine tests need no API key or provider calls. Run `uv run pytest -q` before committing. There is no coverage threshold; check a real PDF manually when changing provider integration.
+Use `pytest` for tests under `tests/`, named `test_*.py`. Current tests cover schema validation, `.env` model selection and precedence, and both sync and async extraction paths. Mock agent calls so routine tests need no API key or provider calls. Run pytest and both Ruff checks before committing. There is no coverage threshold; check a real PDF manually when changing provider integration.
 
 ## Commit & Pull Request Guidelines
 
-The history currently contains only `Initial Commit`, so no detailed convention is established. Use short imperative subjects, such as `Add metadata validation tests`, and keep commits focused. In pull requests, describe the behavior changed, note the tests run, and mention any required provider configuration. Include a sample JSON result when extraction output changes, with personal document details removed.
+Recent commits use short imperative subjects such as `Add ruff for linting and formatting; update documentation`. Keep commits focused. In pull requests, describe the behavior changed, note the tests and Ruff checks run, and mention any required provider configuration. Include a redacted JSON result when extraction output changes.
