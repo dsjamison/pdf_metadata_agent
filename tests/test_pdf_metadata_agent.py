@@ -10,6 +10,7 @@ import pydantic_ai
 import pytest
 from pydantic import ValidationError
 from pydantic_ai import BinaryContent
+from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.usage import RunUsage
 
 
@@ -238,3 +239,33 @@ def test_cli_rename_flag(extraction_module, monkeypatch, capsys):
 
     extract.assert_called_once_with(Path("book.pdf"), rename=True)
     assert capsys.readouterr().out == "{}\n"
+
+
+def test_build_model_returns_model_string_for_default_providers(
+    extraction_module, monkeypatch
+):
+    monkeypatch.setenv("PDF_METADATA_MODEL", "anthropic:claude-sonnet-4-6")
+
+    assert extraction_module._build_model() == "anthropic:claude-sonnet-4-6"
+
+
+def test_build_model_wires_meta_chat_model_without_forced_tools(
+    extraction_module, monkeypatch
+):
+    monkeypatch.setenv("PDF_METADATA_MODEL", "meta:muse-spark-1.3-contributor")
+    monkeypatch.setenv("META_API_KEY", "meta-test-key")
+
+    model = extraction_module._build_model()
+
+    assert isinstance(model, OpenAIChatModel)
+    assert model.model_name == "muse-spark-1.3-contributor"
+    assert model.profile.get("openai_supports_tool_choice_required") is False
+    assert "api.meta.ai" in model.base_url
+
+
+def test_build_model_meta_requires_api_key(extraction_module, monkeypatch):
+    monkeypatch.setenv("PDF_METADATA_MODEL", "meta:muse-spark-1.3-contributor")
+    monkeypatch.delenv("META_API_KEY", raising=False)
+
+    with pytest.raises(RuntimeError, match="META_API_KEY"):
+        extraction_module._build_model()

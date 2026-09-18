@@ -146,6 +146,19 @@ The default is `anthropic:claude-sonnet-4-6`. For Gemini, select
 `google-gla:gemini-2.5-flash` and set `GOOGLE_API_KEY`. Other PydanticAI model
 strings can be used with their provider's credentials.
 
+For Meta's API, use the `meta:` scheme with your Meta key:
+
+```dotenv
+PDF_METADATA_MODEL=meta:muse-spark-1.3-contributor
+META_API_KEY=your-key-here
+```
+
+The `meta:` scheme talks to Meta's OpenAI-compatible Chat Completions API
+(`https://api.meta.ai/v1` by default, overridable with `META_BASE_URL`) and
+leaves `tool_choice` on `auto`, since Meta rejects forced tool use. Do not use
+the `openai:` prefix for Meta: it targets the Responses API, which Meta does
+not implement.
+
 ## Tests and contributions
 
 Install the project and its development dependencies, then run the tests:

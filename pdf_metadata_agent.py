@@ -24,6 +24,45 @@ from pydantic_ai import Agent, BinaryContent
 load_dotenv(Path(__file__).with_name(".env"))
 
 
+def _build_model():
+    """Resolve the model for the extraction agent.
+
+    Returns the ``PDF_METADATA_MODEL`` string unchanged, except for the
+    ``meta:`` scheme, which builds an OpenAI-compatible chat model pointed
+    at Meta's API. Meta only implements the Chat Completions API and only
+    supports ``tool_choice="auto"``, so the model is constructed explicitly
+    with a profile that disables forced tool use (PydanticAI's ``openai:``
+    prefix would use the Responses API instead).
+    """
+    model_name = os.getenv("PDF_METADATA_MODEL", "anthropic:claude-sonnet-4-6")
+    if not model_name.startswith("meta:"):
+        return model_name
+
+    from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.profiles.openai import OpenAIModelProfile
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    api_key = os.getenv("META_API_KEY")
+    if not api_key:
+        raise RuntimeError(
+            "PDF_METADATA_MODEL uses the 'meta:' scheme but META_API_KEY is not set"
+        )
+    _, name = model_name.split(":", 1)
+    if not name.strip():
+        raise RuntimeError(
+            "PDF_METADATA_MODEL uses the 'meta:' scheme but names no model"
+        )
+    provider = OpenAIProvider(
+        base_url=os.getenv("META_BASE_URL", "https://api.meta.ai/v1"),
+        api_key=api_key,
+    )
+    return OpenAIChatModel(
+        name,
+        provider=provider,
+        profile=OpenAIModelProfile(openai_supports_tool_choice_required=False),
+    )
+
+
 class ISBNEntry(BaseModel):
     value: str = Field(description="ISBN-10 or ISBN-13, digits only")
     format: str | None = Field(
@@ -67,7 +106,7 @@ class BookMetadata(BaseModel):
 
 
 extraction_agent = Agent(
-    model=os.getenv("PDF_METADATA_MODEL", "anthropic:claude-sonnet-4-6"),
+    model=_build_model(),
     output_type=BookMetadata,
     system_prompt=(
         "You extract bibliographic metadata from book/document PDFs. "
