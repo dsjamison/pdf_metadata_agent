@@ -27,7 +27,7 @@ automatically if the output doesn't conform.
 
 ## Requirements
 
-- Python 3.10+ (for `str | None` union syntax)
+- Python 3.13+ (as declared in `pyproject.toml`)
 - An API key for whichever model provider you use (defaults to Anthropic)
 
 ## Setup
@@ -35,15 +35,21 @@ automatically if the output doesn't conform.
 Using `uv`:
 
 ```bash
-uv add pydantic-ai
-export ANTHROPIC_API_KEY=your-key-here   # or OPENAI_API_KEY / GEMINI_API_KEY etc.
+uv sync
+cp .env.example .env
 ```
 
-Using `pip`:
+Edit `.env` to set `PDF_METADATA_MODEL` and the API key for that provider.
+The example lists Anthropic, OpenAI, and Gemini model strings. The program
+loads `.env` next to `pdf_metadata_agent.py` at startup. Existing environment
+variables take precedence. `.env` is ignored by Git; keep real keys out of
+`.env.example` and commits.
+
+Using `pip` instead:
 
 ```bash
-pip install pydantic-ai
-export ANTHROPIC_API_KEY=your-key-here
+pip install pydantic-ai python-dotenv
+cp .env.example .env
 ```
 
 ## Usage
@@ -95,18 +101,32 @@ async def extract(pdf_path: str):
 
 ## Swapping models
 
-Change the `model=` string in `extraction_agent`:
+Set `PDF_METADATA_MODEL` in `.env` to a PydanticAI model string, for example:
 
-```python
-extraction_agent = Agent(
-    model="openai:gpt-5.2",       # or "google-gla:gemini-2.5-flash", etc.
-    output_type=BookMetadata,
-    ...
-)
+```dotenv
+PDF_METADATA_MODEL=openai:gpt-5.2
+OPENAI_API_KEY=your-key-here
 ```
 
-No other code changes are needed — PydanticAI normalizes the multimodal
-input and structured-output handling across providers.
+The default is `anthropic:claude-sonnet-4-6`. For Gemini, select
+`google-gla:gemini-2.5-flash` and set `GOOGLE_API_KEY`. Other PydanticAI model
+strings can be used with their provider's credentials.
+
+## Tests and contributions
+
+Install the project and its development dependencies, then run the tests:
+
+```bash
+uv sync
+uv run pytest -q
+```
+
+Tests in `tests/test_pdf_metadata_agent.py` cover metadata validation and both
+extraction functions. They mock model calls, so no API key or PDF fixture is
+needed. Add focused `test_*.py` tests for behavior changes and run the suite
+before committing. Use a short, imperative commit subject such as
+`Add metadata validation tests`. In pull requests, summarize the change and
+list the tests run; include a redacted JSON example if the output changes.
 
 ## Known limitations
 

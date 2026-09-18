@@ -12,10 +12,14 @@ Requires an API key for whichever model you pick, e.g.:
     export ANTHROPIC_API_KEY=...
 """
 
+import os
 from pathlib import Path
 
+from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent, BinaryContent
+
+load_dotenv(Path(__file__).with_name(".env"))
 
 
 class BookMetadata(BaseModel):
@@ -44,7 +48,7 @@ class BookMetadata(BaseModel):
 
 
 extraction_agent = Agent(
-    model="anthropic:claude-sonnet-4-6",  # swap to 'openai:gpt-5.2' etc. freely
+    model=os.getenv("PDF_METADATA_MODEL", "anthropic:claude-sonnet-4-6"),
     output_type=BookMetadata,
     system_prompt=(
         "You extract bibliographic metadata from book/document PDFs. "
