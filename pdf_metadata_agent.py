@@ -13,6 +13,7 @@ Requires an API key for whichever model you pick, e.g.:
 """
 
 import argparse
+import glob
 import json
 import os
 import sqlite3
@@ -156,7 +157,7 @@ class BookMetadata(BaseModel):
     suggested_filename: str = Field(
         description=(
             "Standardized filename (no extension) built from this metadata, "
-            "e.g. 'Author_Lastname_-_Title_(2023)'"
+            "e.g. 'Author_Lastname_-_Title'"
         )
     )
 
@@ -249,13 +250,12 @@ extraction_agent = Agent(
         "Original filename, file size, run time, token counts, page count, "
         "provider, and model are set by the application.\n\n"
         "Also produce `suggested_filename`, a standardized filename (no "
-        "extension) in the form 'Lastname_-_Title_(Year)'. Rules:\n"
+        "extension) in the form 'Lastname_-_Title'. Rules:\n"
         "- Use the first author's last name only; append 'et_al' if there "
         "are 3+ authors, or 'and_Lastname2' if there are exactly 2.\n"
         "- Replace spaces in the title with underscores; strip characters "
         'that are illegal in Windows/Linux filenames (\\ / : * ? " < > |).\n'
-        "- Wrap the publication year in parentheses if known; omit the "
-        "year segment entirely if unknown.\n"
+        "- Do not include the publication year or any date in the filename.\n"
         "- If authors are unknown, start the filename with the title."
     ),
 )
@@ -331,9 +331,39 @@ async def extract_metadata_async(
     return result.output
 
 
+def _expand_paths(patterns: list[Path]) -> list[Path]:
+    """Expand glob patterns to PDF paths, preserving order without duplicates.
+
+    Plain paths pass through untouched (missing files fail at extraction);
+    patterns matching only non-files, or nothing, contribute no paths.
+    """
+    paths: list[Path] = []
+    seen: set[Path] = set()
+    for pattern in patterns:
+        text = str(pattern)
+        if glob.has_magic(text):
+            matches = [
+                Path(m)
+                for m in sorted(glob.glob(text, recursive=True))
+                if Path(m).is_file()
+            ]
+        else:
+            matches = [pattern]
+        for path in matches:
+            if path not in seen:
+                seen.add(path)
+                paths.append(path)
+    return paths
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Extract metadata from a PDF")
-    parser.add_argument("pdf_path", type=Path, nargs="?")
+    parser = argparse.ArgumentParser(description="Extract metadata from PDFs")
+    parser.add_argument(
+        "pdf_path",
+        type=Path,
+        nargs="*",
+        help="PDF file(s) or glob pattern(s), e.g. 'pdfs/*.pdf'",
+    )
     parser.add_argument(
         "--rename", action="store_true", help="Rename the PDF to its suggested filename"
     )
@@ -346,10 +376,17 @@ def main() -> None:
     if args.list:
         print(json.dumps(list_metadata(), indent=2))
         return
-    if args.pdf_path is None:
+    if not args.pdf_path:
         parser.error("pdf_path is required unless --list is given")
-    meta = extract_metadata(args.pdf_path, rename=args.rename)
-    print(meta.model_dump_json(indent=2))
+    paths = _expand_paths(args.pdf_path)
+    if not paths:
+        parser.error(f"no files match: {' '.join(str(p) for p in args.pdf_path)}")
+    if len(paths) == 1:
+        meta = extract_metadata(paths[0], rename=args.rename)
+        print(meta.model_dump_json(indent=2))
+    else:
+        results = [extract_metadata(path, rename=args.rename) for path in paths]
+        print(json.dumps([meta.model_dump() for meta in results], indent=2))
 
 
 if __name__ == "__main__":

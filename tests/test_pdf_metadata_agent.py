@@ -399,6 +399,53 @@ def test_cli_requires_pdf_path_without_list(extraction_module, monkeypatch):
         extraction_module.main()
 
 
+def test_expand_paths_sorts_dedupes_and_passes_literals(extraction_module, tmp_path):
+    first = tmp_path / "a.pdf"
+    second = tmp_path / "b.pdf"
+    _write_sample_pdf(second)
+    _write_sample_pdf(first)
+    missing = tmp_path / "missing.pdf"
+
+    result = extraction_module._expand_paths([tmp_path / "*.pdf", first, missing])
+
+    assert result == [first, second, missing]
+
+
+def test_cli_wildcard_processes_multiple_pdfs(
+    extraction_module, tmp_path, monkeypatch, capsys
+):
+    first = tmp_path / "a.pdf"
+    second = tmp_path / "b.pdf"
+    _write_sample_pdf(first)
+    _write_sample_pdf(second)
+
+    def fake_extract(path, rename=False):
+        return extraction_module.BookMetadata(
+            title=path.stem, confidence=0.9, suggested_filename=path.stem
+        )
+
+    monkeypatch.setattr(
+        extraction_module, "extract_metadata", Mock(side_effect=fake_extract)
+    )
+    monkeypatch.setattr(sys, "argv", ["pdf_metadata_agent.py", str(tmp_path / "*.pdf")])
+
+    extraction_module.main()
+
+    calls = extraction_module.extract_metadata.call_args_list
+    assert [call.args[0] for call in calls] == [first, second]
+    records = json.loads(capsys.readouterr().out)
+    assert [record["title"] for record in records] == ["a", "b"]
+
+
+def test_cli_pattern_without_matches_errors(extraction_module, tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        sys, "argv", ["pdf_metadata_agent.py", str(tmp_path / "none-*.pdf")]
+    )
+
+    with pytest.raises(SystemExit):
+        extraction_module.main()
+
+
 @pytest.mark.parametrize(
     ("configured_pages", "expected_pages"),
     [(None, 10), ("3", 3), ("25", 15)],

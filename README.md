@@ -3,12 +3,13 @@
 A small [PydanticAI](https://ai.pydantic.dev/) agent that reads a PDF and
 returns validated, typed bibliographic metadata — title, authors, labeled ISBNs,
 subjects, summary, document type, and a standardized suggested filename. It
-also reports the PDF file size, model run time, and token usage.
+also reports the PDF file size, page count, model run time, token usage, and
+the provider and model used. Every result is saved to a local SQLite database.
 
-The PDF is sent to a multimodal LLM (Claude, GPT, Gemini, etc.) as raw
-bytes — there's no manual text extraction or regex parsing. PydanticAI
-validates the model's response against a `BookMetadata` schema and retries
-automatically if the output doesn't conform.
+The first pages of the PDF are sent to a multimodal LLM (Claude, GPT, Gemini,
+Meta, etc.) as raw bytes — there's no manual text extraction or regex parsing.
+PydanticAI validates the model's response against a `BookMetadata` schema and
+retries automatically if the output doesn't conform.
 
 ## What it extracts
 
@@ -22,7 +23,7 @@ automatically if the output doesn't conform.
 | `publication_date`     | `str \| None`  | e.g. `"2023"` or `"2023-05"`                 |
 | `edition`             | `str \| None`  |                                              |
 | `language`             | `str \| None`  |                                              |
-| `page_count`           | `int \| None`  |                                              |
+| `page_count`           | `int \| None`  | Total pages, measured from the full file     |
 | `subjects`            | `list[str]`   | Document topics                              |
 | `keywords`            | `list[str]`   | Search terms found in the document           |
 | `summary`             | `str \| None`  | Brief description of the content             |
@@ -36,7 +37,7 @@ automatically if the output doesn't conform.
 | `provider`            | `str \| None`  | Provider that ran the extraction, e.g. `meta` |
 | `model`               | `str \| None`  | Model that ran the extraction                 |
 | `confidence`           | `float`       | Agent's own confidence, `0.0`–`1.0`          |
-| `suggested_filename`    | `str`         | e.g. `Smith_-_Deep_Learning_(2023)`          |
+| `suggested_filename`    | `str`         | e.g. `Smith_-_Deep_Learning`                 |
 
 ## Requirements
 
@@ -53,7 +54,7 @@ cp .env.example .env
 ```
 
 Edit `.env` to set `PDF_METADATA_MODEL` and the API key for that provider.
-The example lists Anthropic, OpenAI, and Gemini model strings. The program
+The example lists Anthropic, OpenAI, Gemini, and Meta model strings. The program
 loads `.env` next to `pdf_metadata_agent.py` at startup. Existing environment
 variables take precedence. `.env` is ignored by Git; keep real keys out of
 `.env.example` and commits.
@@ -61,9 +62,24 @@ variables take precedence. `.env` is ignored by Git; keep real keys out of
 Using `pip` instead:
 
 ```bash
-pip install pydantic-ai python-dotenv
+pip install pydantic-ai python-dotenv pypdf
 cp .env.example .env
 ```
+
+## Configuration
+
+All settings are environment variables (or `.env` entries):
+
+| Variable                | Default                              | Purpose                                              |
+|-------------------------|--------------------------------------|------------------------------------------------------|
+| `PDF_METADATA_MODEL`    | `anthropic:claude-sonnet-4-6`        | Model string; prefix `meta:` selects Meta's API      |
+| `ANTHROPIC_API_KEY`     | —                                    | Key for Anthropic models                             |
+| `OPENAI_API_KEY`        | —                                    | Key for OpenAI models                                |
+| `GOOGLE_API_KEY`        | —                                    | Key for Gemini models                                |
+| `META_API_KEY`          | —                                    | Key for `meta:` models                               |
+| `META_BASE_URL`         | `https://api.meta.ai/v1`             | Override for Meta's OpenAI-compatible endpoint       |
+| `PDF_METADATA_MAX_PAGES`| `10`                                 | Leading pages sent to the model                      |
+| `PDF_METADATA_DB`       | `metadata.db` next to the script     | SQLite database path                                 |
 
 ## Usage
 
@@ -72,6 +88,16 @@ cp .env.example .env
 ```bash
 uv run python pdf_metadata_agent.py /path/to/book.pdf
 ```
+
+Multiple files and glob patterns work too (quote the pattern so your shell
+passes it through untouched):
+
+```bash
+uv run python pdf_metadata_agent.py "pdfs/*.pdf"
+```
+
+A single file prints one JSON object; multiple files print a JSON array.
+A pattern that matches nothing is an error.
 
 To rename the PDF after extraction, add `--rename`:
 
@@ -125,7 +151,7 @@ The script prints extracted metadata as formatted JSON:
   "provider": "anthropic",
   "model": "claude-sonnet-4-6",
   "confidence": 0.95,
-  "suggested_filename": "Goodfellow_et_al_-_Deep_Learning_(2016)"
+  "suggested_filename": "Goodfellow_et_al_-_Deep_Learning"
 }
 ```
 
@@ -189,9 +215,11 @@ uv run ruff format --check .
 ```
 
 Tests in `tests/test_pdf_metadata_agent.py` cover metadata validation, `.env`
-model selection and environment precedence, and both extraction functions.
-They mock model calls, so no API key or PDF fixture is needed. Add focused
-`test_*.py` tests for behavior changes. Run `uv run ruff format .` to apply
+model selection and environment precedence, provider/model recording, the
+`meta:` scheme, SQLite save/list, page subsetting, renaming, and both
+extraction functions. They mock model calls, so no API key is needed; sample
+PDFs are generated with pypdf. Add focused `test_*.py` tests for behavior
+changes. Run `uv run ruff format .` to apply
 formatting, then run the checks above before committing. Use a short,
 imperative commit subject such as `Add metadata validation tests`. In pull
 requests, summarize the change and list the checks run; include a redacted
