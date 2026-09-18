@@ -288,6 +288,28 @@ def test_build_model_meta_requires_api_key(extraction_module, monkeypatch):
         extraction_module._build_model()
 
 
+def test_build_model_wires_cheaper_chat_model_without_forced_tools(
+    extraction_module, monkeypatch
+):
+    monkeypatch.setenv("PDF_METADATA_MODEL", "cheaper:deepseek-v4.1-flash")
+    monkeypatch.setenv("CHEAPER_INFERENCE_API_KEY", "cheaper-test-key")
+
+    model = extraction_module._build_model()
+
+    assert isinstance(model, OpenAIChatModel)
+    assert model.model_name == "deepseek-v4.1-flash"
+    assert model.profile.get("openai_supports_tool_choice_required") is False
+    assert "cheaperinference.com" in model.base_url
+
+
+def test_build_model_cheaper_requires_api_key(extraction_module, monkeypatch):
+    monkeypatch.setenv("PDF_METADATA_MODEL", "cheaper:deepseek-v4.1-flash")
+    monkeypatch.delenv("CHEAPER_INFERENCE_API_KEY", raising=False)
+
+    with pytest.raises(RuntimeError, match="CHEAPER_INFERENCE_API_KEY"):
+        extraction_module._build_model()
+
+
 @pytest.mark.parametrize(
     ("configured_model", "expected_provider", "expected_model"),
     [
@@ -376,6 +398,47 @@ def test_extract_metadata_saves_record_to_database(
     assert record["title"] == "A Book"
     assert record["provider"] == "meta"
     assert record["model"] == "muse-spark-1.3-contributor"
+
+
+def test_extract_metadata_cheaper_sends_text_not_pdf(
+    extraction_module, tmp_path, monkeypatch
+):
+    monkeypatch.setenv("PDF_METADATA_MODEL", "cheaper:deepseek-v4.1-flash")
+    monkeypatch.setenv("CHEAPER_INFERENCE_API_KEY", "cheaper-test-key")
+    monkeypatch.setattr(
+        extraction_module,
+        "_front_matter_text",
+        lambda _pdf_bytes: "Deep Learning Ian Goodfellow MIT Press",
+    )
+    pdf = tmp_path / "book.pdf"
+    _write_sample_pdf(pdf)
+    metadata = extraction_module.BookMetadata(
+        title="A Book", confidence=0.9, suggested_filename="A_Book"
+    )
+    extraction_module.extraction_agent.run_sync = Mock(
+        return_value=SimpleNamespace(output=metadata, usage=RunUsage())
+    )
+
+    extraction_module.extract_metadata(pdf)
+
+    (prompt,) = extraction_module.extraction_agent.run_sync.call_args[0]
+    assert not any(isinstance(part, BinaryContent) for part in prompt)
+    assert any("Deep Learning" in part for part in prompt if isinstance(part, str))
+
+
+def test_extract_metadata_cheaper_scanned_pdf_raises(
+    extraction_module, tmp_path, monkeypatch
+):
+    monkeypatch.setenv("PDF_METADATA_MODEL", "cheaper:deepseek-v4.1-flash")
+    monkeypatch.setenv("CHEAPER_INFERENCE_API_KEY", "cheaper-test-key")
+    monkeypatch.setattr(
+        extraction_module, "_front_matter_text", lambda _pdf_bytes: "   \n"
+    )
+    pdf = tmp_path / "book.pdf"
+    _write_sample_pdf(pdf)
+
+    with pytest.raises(RuntimeError, match="extractable text"):
+        extraction_module.extract_metadata(pdf)
 
 
 def test_cli_list_flag(extraction_module, monkeypatch, capsys):

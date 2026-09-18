@@ -64,6 +64,51 @@ def _pdf_payload(pdf_bytes: bytes) -> tuple[bytes, int]:
     return output.getvalue(), total_pages
 
 
+def _front_matter_text(pdf_bytes: bytes) -> str:
+    """Extract readable text from the first N pages of a PDF.
+
+    Text-only chat models (such as DeepSeek via CheaperInference) cannot
+    accept PDF file input, so they receive this text instead of raw bytes.
+    """
+    reader = PdfReader(BytesIO(pdf_bytes))
+    parts = []
+    for index, page in enumerate(reader.pages[: _max_pages()], start=1):
+        try:
+            text = page.extract_text() or ""
+        except Exception:
+            text = ""
+        cleaned = text.strip()
+        if cleaned:
+            parts.append(f"--- page {index} ---\n{cleaned}")
+    return "\n\n".join(parts)
+
+
+def _model_input(pdf_bytes: bytes, send_bytes: bytes) -> list:
+    """Build the agent prompt for the configured model.
+
+    CheaperInference text models get extracted front-matter text (small
+    enough for the proxy's request limits); all other models get the raw
+    PDF bytes as before.
+    """
+    if os.getenv("PDF_METADATA_MODEL", DEFAULT_MODEL).startswith("cheaper:"):
+        text = _front_matter_text(pdf_bytes)
+        if not text.strip():
+            raise RuntimeError(
+                "cheaper: models receive extracted PDF text, but this PDF "
+                "has no extractable text (likely scanned images). OCR the "
+                "PDF or use a multimodal provider instead."
+            )
+        return [
+            "Extract full bibliographic metadata from this document's "
+            "front matter text.",
+            text,
+        ]
+    return [
+        "Extract full bibliographic metadata from this document.",
+        BinaryContent(data=send_bytes, media_type="application/pdf"),
+    ]
+
+
 def _provider_and_model() -> tuple[str | None, str | None]:
     """Split PDF_METADATA_MODEL into (provider, model) for recording on output."""
     raw = os.getenv("PDF_METADATA_MODEL", DEFAULT_MODEL)
@@ -77,32 +122,47 @@ def _build_model():
     """Resolve the model for the extraction agent.
 
     Returns the ``PDF_METADATA_MODEL`` string unchanged, except for the
-    ``meta:`` scheme, which builds an OpenAI-compatible chat model pointed
-    at Meta's API. Meta only implements the Chat Completions API and only
-    supports ``tool_choice="auto"``, so the model is constructed explicitly
-    with a profile that disables forced tool use (PydanticAI's ``openai:``
-    prefix would use the Responses API instead).
+    ``meta:`` and ``cheaper:`` schemes, which build an OpenAI-compatible
+    chat model pointed at Meta's API or CheaperInference. Those endpoints
+    only implement the Chat Completions API and only support
+    ``tool_choice="auto"``, so the model is constructed explicitly with a
+    profile that disables forced tool use (PydanticAI's ``openai:`` prefix
+    would use the Responses API instead).
     """
     model_name = os.getenv("PDF_METADATA_MODEL", DEFAULT_MODEL)
-    if not model_name.startswith("meta:"):
+    if model_name.startswith("meta:"):
+        scheme, key_var, url_var, default_url = (
+            "meta",
+            "META_API_KEY",
+            "META_BASE_URL",
+            "https://api.meta.ai/v1",
+        )
+    elif model_name.startswith("cheaper:"):
+        scheme, key_var, url_var, default_url = (
+            "cheaper",
+            "CHEAPER_INFERENCE_API_KEY",
+            "CHEAPER_INFERENCE_BASE_URL",
+            "https://api.cheaperinference.com/v1",
+        )
+    else:
         return model_name
 
     from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.profiles.openai import OpenAIModelProfile
     from pydantic_ai.providers.openai import OpenAIProvider
 
-    api_key = os.getenv("META_API_KEY")
+    api_key = os.getenv(key_var)
     if not api_key:
         raise RuntimeError(
-            "PDF_METADATA_MODEL uses the 'meta:' scheme but META_API_KEY is not set"
+            f"PDF_METADATA_MODEL uses the '{scheme}:' scheme but {key_var} is not set"
         )
     _, name = model_name.split(":", 1)
     if not name.strip():
         raise RuntimeError(
-            "PDF_METADATA_MODEL uses the 'meta:' scheme but names no model"
+            f"PDF_METADATA_MODEL uses the '{scheme}:' scheme but names no model"
         )
     provider = OpenAIProvider(
-        base_url=os.getenv("META_BASE_URL", "https://api.meta.ai/v1"),
+        base_url=os.getenv(url_var, default_url),
         api_key=api_key,
     )
     return OpenAIChatModel(
@@ -282,12 +342,7 @@ def extract_metadata(pdf_path: Path, *, rename: bool = False) -> BookMetadata:
     pdf_bytes = pdf_path.read_bytes()
     send_bytes, total_pages = _pdf_payload(pdf_bytes)
     start = perf_counter()
-    result = extraction_agent.run_sync(
-        [
-            "Extract full bibliographic metadata from this document.",
-            BinaryContent(data=send_bytes, media_type="application/pdf"),
-        ]
-    )
+    result = extraction_agent.run_sync(_model_input(pdf_bytes, send_bytes))
     elapsed = perf_counter() - start
     result.output.original_filename = pdf_path.name
     result.output.file_size_bytes = len(pdf_bytes)
@@ -310,12 +365,7 @@ async def extract_metadata_async(
     pdf_bytes = pdf_path.read_bytes()
     send_bytes, total_pages = _pdf_payload(pdf_bytes)
     start = perf_counter()
-    result = await extraction_agent.run(
-        [
-            "Extract full bibliographic metadata from this document.",
-            BinaryContent(data=send_bytes, media_type="application/pdf"),
-        ]
-    )
+    result = await extraction_agent.run(_model_input(pdf_bytes, send_bytes))
     elapsed = perf_counter() - start
     result.output.original_filename = pdf_path.name
     result.output.file_size_bytes = len(pdf_bytes)
