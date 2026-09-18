@@ -1,5 +1,6 @@
 import asyncio
 import importlib.util
+import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,9 +16,10 @@ from pydantic_ai.usage import RunUsage
 
 
 @pytest.fixture
-def extraction_module(monkeypatch):
+def extraction_module(monkeypatch, tmp_path):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     monkeypatch.delenv("PDF_METADATA_MODEL", raising=False)
+    monkeypatch.setenv("PDF_METADATA_DB", str(tmp_path / "test.db"))
     monkeypatch.setattr(dotenv, "load_dotenv", lambda *_: False)
     script = Path(__file__).resolve().parents[1] / "pdf_metadata_agent.py"
     spec = importlib.util.spec_from_file_location(
@@ -308,3 +310,77 @@ def test_extract_metadata_records_provider_and_model(
 
     assert actual.provider == expected_provider
     assert actual.model == expected_model
+
+
+def test_save_and_list_metadata_round_trip(extraction_module):
+    metadata = extraction_module.BookMetadata(
+        title="A Book",
+        confidence=0.8,
+        suggested_filename="A_Book",
+        authors=["Jane Doe"],
+        isbns=[{"value": "9780262035613", "format": "cloth"}],
+        subjects=["Machine learning"],
+        keywords=["neural networks"],
+        provider="meta",
+        model="muse-spark-1.3-contributor",
+    )
+
+    row_id = extraction_module.save_metadata(metadata)
+
+    (record,) = extraction_module.list_metadata()
+    assert record["id"] == row_id
+    assert record["title"] == "A Book"
+    assert record["suggested_filename"] == "A_Book"
+    assert record["authors"] == ["Jane Doe"]
+    assert record["isbns"] == [{"value": "9780262035613", "format": "cloth"}]
+    assert record["subjects"] == ["Machine learning"]
+    assert record["keywords"] == ["neural networks"]
+    assert record["provider"] == "meta"
+    assert record["model"] == "muse-spark-1.3-contributor"
+    assert record["extracted_at"]
+
+
+def test_list_metadata_empty_database(extraction_module):
+    assert extraction_module.list_metadata() == []
+
+
+def test_extract_metadata_saves_record_to_database(
+    extraction_module, tmp_path, monkeypatch
+):
+    monkeypatch.setenv("PDF_METADATA_MODEL", "meta:muse-spark-1.3-contributor")
+    pdf = tmp_path / "book.pdf"
+    pdf.write_bytes(b"%PDF-1.4 test")
+    metadata = extraction_module.BookMetadata(
+        title="A Book", confidence=0.9, suggested_filename="A_Book"
+    )
+    extraction_module.extraction_agent.run_sync = Mock(
+        return_value=SimpleNamespace(output=metadata, usage=RunUsage())
+    )
+
+    extraction_module.extract_metadata(pdf)
+
+    (record,) = extraction_module.list_metadata()
+    assert record["title"] == "A Book"
+    assert record["provider"] == "meta"
+    assert record["model"] == "muse-spark-1.3-contributor"
+
+
+def test_cli_list_flag(extraction_module, monkeypatch, capsys):
+    extraction_module.save_metadata(
+        extraction_module.BookMetadata(
+            title="A Book", confidence=0.5, suggested_filename="A_Book"
+        )
+    )
+    monkeypatch.setattr(sys, "argv", ["pdf_metadata_agent.py", "--list"])
+
+    extraction_module.main()
+
+    (record,) = json.loads(capsys.readouterr().out)
+    assert record["title"] == "A Book"
+
+
+def test_cli_requires_pdf_path_without_list(extraction_module, monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["pdf_metadata_agent.py"])
+
+    with pytest.raises(SystemExit):
+        extraction_module.main()

@@ -13,11 +13,16 @@ Requires an API key for whichever model you pick, e.g.:
 """
 
 import argparse
+import json
 import os
+import sqlite3
+from datetime import datetime, timezone
+from io import BytesIO
 from pathlib import Path
 from time import perf_counter
 
 from dotenv import load_dotenv
+from pypdf import PdfReader, PdfWriter
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent, BinaryContent
 
@@ -124,6 +129,77 @@ class BookMetadata(BaseModel):
     )
 
 
+_SCHEMA = """
+CREATE TABLE IF NOT EXISTS metadata (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    subtitle TEXT,
+    authors TEXT NOT NULL DEFAULT '[]',
+    isbns TEXT NOT NULL DEFAULT '[]',
+    publisher TEXT,
+    publication_date TEXT,
+    edition TEXT,
+    language TEXT,
+    page_count INTEGER,
+    subjects TEXT NOT NULL DEFAULT '[]',
+    keywords TEXT NOT NULL DEFAULT '[]',
+    summary TEXT,
+    document_type TEXT,
+    file_size_bytes INTEGER,
+    original_filename TEXT,
+    run_time_seconds REAL,
+    input_tokens INTEGER,
+    output_tokens INTEGER,
+    total_tokens INTEGER,
+    provider TEXT,
+    model TEXT,
+    confidence REAL NOT NULL,
+    suggested_filename TEXT NOT NULL,
+    extracted_at TEXT NOT NULL
+)
+"""
+
+_JSON_COLUMNS = ("authors", "isbns", "subjects", "keywords")
+
+
+def _db_path() -> Path:
+    return Path(os.getenv("PDF_METADATA_DB", Path(__file__).with_name("metadata.db")))
+
+
+def save_metadata(meta: BookMetadata, db_path: Path | None = None) -> int:
+    """Insert extracted metadata into the SQLite database; return the row id."""
+    path = db_path if db_path is not None else _db_path()
+    record = meta.model_dump()
+    for column in _JSON_COLUMNS:
+        record[column] = json.dumps(record[column])
+    record["extracted_at"] = datetime.now(timezone.utc).isoformat()
+    columns = ", ".join(record)
+    placeholders = ", ".join(["?"] * len(record))
+    with sqlite3.connect(path) as conn:
+        conn.execute(_SCHEMA)
+        cursor = conn.execute(
+            f"INSERT INTO metadata ({columns}) VALUES ({placeholders})",
+            list(record.values()),
+        )
+        return cursor.lastrowid or 0
+
+
+def list_metadata(db_path: Path | None = None) -> list[dict]:
+    """Return all saved metadata records, oldest first."""
+    path = db_path if db_path is not None else _db_path()
+    with sqlite3.connect(path) as conn:
+        conn.row_factory = sqlite3.Row
+        conn.execute(_SCHEMA)
+        rows = conn.execute("SELECT * FROM metadata ORDER BY id").fetchall()
+    records = []
+    for row in rows:
+        record = dict(row)
+        for column in _JSON_COLUMNS:
+            record[column] = json.loads(record[column])
+        records.append(record)
+    return records
+
+
 extraction_agent = Agent(
     model=_build_model(),
     output_type=BookMetadata,
@@ -187,6 +263,7 @@ def extract_metadata(pdf_path: Path, *, rename: bool = False) -> BookMetadata:
     result.output.output_tokens = result.usage.output_tokens
     result.output.total_tokens = result.usage.total_tokens
     result.output.provider, result.output.model = _provider_and_model()
+    save_metadata(result.output)
     if rename:
         _rename_pdf(pdf_path, result.output.suggested_filename)
     return result.output  # already validated as BookMetadata
@@ -212,6 +289,7 @@ async def extract_metadata_async(
     result.output.output_tokens = result.usage.output_tokens
     result.output.total_tokens = result.usage.total_tokens
     result.output.provider, result.output.model = _provider_and_model()
+    save_metadata(result.output)
     if rename:
         _rename_pdf(pdf_path, result.output.suggested_filename)
     return result.output
@@ -219,11 +297,21 @@ async def extract_metadata_async(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Extract metadata from a PDF")
-    parser.add_argument("pdf_path", type=Path)
+    parser.add_argument("pdf_path", type=Path, nargs="?")
     parser.add_argument(
         "--rename", action="store_true", help="Rename the PDF to its suggested filename"
     )
+    parser.add_argument(
+        "--list",
+        action="store_true",
+        help="List metadata saved in the SQLite database",
+    )
     args = parser.parse_args()
+    if args.list:
+        print(json.dumps(list_metadata(), indent=2))
+        return
+    if args.pdf_path is None:
+        parser.error("pdf_path is required unless --list is given")
     meta = extract_metadata(args.pdf_path, rename=args.rename)
     print(meta.model_dump_json(indent=2))
 

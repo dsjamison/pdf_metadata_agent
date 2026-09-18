@@ -83,6 +83,14 @@ The new name is the suggested basename plus the PDF's existing extension.
 Without `--rename`, the file is left in place. Renaming fails if the target
 filename already exists; it does not replace that file.
 
+Every extraction is also saved to a SQLite database (`metadata.db` next to the
+script, overridable with the `PDF_METADATA_DB` environment variable). To list
+all saved records as JSON:
+
+```bash
+uv run python pdf_metadata_agent.py --list
+```
+
 Run this from the repository root. The installed `pdf-metadata-agent` console
 command currently prints a scaffold greeting; use the script above for extraction.
 The script prints extracted metadata as formatted JSON:
