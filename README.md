@@ -33,6 +33,8 @@ automatically if the output doesn't conform.
 | `input_tokens`        | `int \| None`  | Input tokens reported by PydanticAI          |
 | `output_tokens`       | `int \| None`  | Output tokens reported by PydanticAI         |
 | `total_tokens`        | `int \| None`  | Sum of input and output tokens               |
+| `provider`            | `str \| None`  | Provider that ran the extraction, e.g. `meta` |
+| `model`               | `str \| None`  | Model that ran the extraction                 |
 | `confidence`           | `float`       | Agent's own confidence, `0.0`–`1.0`          |
 | `suggested_filename`    | `str`         | e.g. `Smith_-_Deep_Learning_(2023)`          |
 
@@ -106,6 +108,8 @@ The script prints extracted metadata as formatted JSON:
   "input_tokens": 2048,
   "output_tokens": 256,
   "total_tokens": 2304,
+  "provider": "anthropic",
+  "model": "claude-sonnet-4-6",
   "confidence": 0.95,
   "suggested_filename": "Goodfellow_et_al_-_Deep_Learning_(2016)"
 }

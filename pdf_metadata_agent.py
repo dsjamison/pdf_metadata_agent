@@ -23,6 +23,17 @@ from pydantic_ai import Agent, BinaryContent
 
 load_dotenv(Path(__file__).with_name(".env"))
 
+DEFAULT_MODEL = "anthropic:claude-sonnet-4-6"
+
+
+def _provider_and_model() -> tuple[str | None, str | None]:
+    """Split PDF_METADATA_MODEL into (provider, model) for recording on output."""
+    raw = os.getenv("PDF_METADATA_MODEL", DEFAULT_MODEL)
+    if ":" in raw:
+        provider, name = raw.split(":", 1)
+        return provider or None, name or None
+    return None, raw or None
+
 
 def _build_model():
     """Resolve the model for the extraction agent.
@@ -34,7 +45,7 @@ def _build_model():
     with a profile that disables forced tool use (PydanticAI's ``openai:``
     prefix would use the Responses API instead).
     """
-    model_name = os.getenv("PDF_METADATA_MODEL", "anthropic:claude-sonnet-4-6")
+    model_name = os.getenv("PDF_METADATA_MODEL", DEFAULT_MODEL)
     if not model_name.startswith("meta:"):
         return model_name
 
@@ -94,6 +105,14 @@ class BookMetadata(BaseModel):
     input_tokens: int | None = Field(default=None, ge=0)
     output_tokens: int | None = Field(default=None, ge=0)
     total_tokens: int | None = Field(default=None, ge=0)
+    provider: str | None = Field(
+        default=None,
+        description="Provider that performed the extraction, e.g. 'anthropic'",
+    )
+    model: str | None = Field(
+        default=None,
+        description="Model that performed the extraction, e.g. 'claude-sonnet-4-6'",
+    )
     confidence: float = Field(
         ge=0.0, le=1.0, description="Agent's own confidence in this extraction"
     )
@@ -119,8 +138,8 @@ extraction_agent = Agent(
         "Leave unknown bibliographic facts null rather than guessing. "
         "Use empty lists for missing subjects or keywords. "
         "Normalize ISBNs to digits only (strip dashes/spaces). "
-        "Original filename, file size, run time, and token counts are set by "
-        "the application.\n\n"
+        "Original filename, file size, run time, token counts, provider, and "
+        "model are set by the application.\n\n"
         "Also produce `suggested_filename`, a standardized filename (no "
         "extension) in the form 'Lastname_-_Title_(Year)'. Rules:\n"
         "- Use the first author's last name only; append 'et_al' if there "
@@ -167,6 +186,7 @@ def extract_metadata(pdf_path: Path, *, rename: bool = False) -> BookMetadata:
     result.output.input_tokens = result.usage.input_tokens
     result.output.output_tokens = result.usage.output_tokens
     result.output.total_tokens = result.usage.total_tokens
+    result.output.provider, result.output.model = _provider_and_model()
     if rename:
         _rename_pdf(pdf_path, result.output.suggested_filename)
     return result.output  # already validated as BookMetadata
@@ -191,6 +211,7 @@ async def extract_metadata_async(
     result.output.input_tokens = result.usage.input_tokens
     result.output.output_tokens = result.usage.output_tokens
     result.output.total_tokens = result.usage.total_tokens
+    result.output.provider, result.output.model = _provider_and_model()
     if rename:
         _rename_pdf(pdf_path, result.output.suggested_filename)
     return result.output

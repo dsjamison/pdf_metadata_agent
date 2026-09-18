@@ -73,6 +73,8 @@ def test_book_metadata_defaults_and_confidence_bounds(extraction_module):
     assert metadata.original_filename is None
     assert metadata.run_time_seconds is None
     assert metadata.total_tokens is None
+    assert metadata.provider is None
+    assert metadata.model is None
 
     with pytest.raises(ValidationError):
         extraction_module.BookMetadata(
@@ -269,3 +271,40 @@ def test_build_model_meta_requires_api_key(extraction_module, monkeypatch):
 
     with pytest.raises(RuntimeError, match="META_API_KEY"):
         extraction_module._build_model()
+
+
+@pytest.mark.parametrize(
+    ("configured_model", "expected_provider", "expected_model"),
+    [
+        ("meta:muse-spark-1.3-contributor", "meta", "muse-spark-1.3-contributor"),
+        ("anthropic:claude-sonnet-4-6", "anthropic", "claude-sonnet-4-6"),
+        ("localmodel", None, "localmodel"),
+    ],
+)
+@pytest.mark.parametrize("async_mode", [False, True])
+def test_extract_metadata_records_provider_and_model(
+    extraction_module,
+    tmp_path,
+    monkeypatch,
+    configured_model,
+    expected_provider,
+    expected_model,
+    async_mode,
+):
+    monkeypatch.setenv("PDF_METADATA_MODEL", configured_model)
+    pdf = tmp_path / "book.pdf"
+    pdf.write_bytes(b"%PDF-1.4 test")
+    metadata = extraction_module.BookMetadata(
+        title="A Book", confidence=0.8, suggested_filename="A_Book"
+    )
+    result = SimpleNamespace(output=metadata, usage=RunUsage())
+
+    if async_mode:
+        extraction_module.extraction_agent.run = AsyncMock(return_value=result)
+        actual = asyncio.run(extraction_module.extract_metadata_async(pdf))
+    else:
+        extraction_module.extraction_agent.run_sync = Mock(return_value=result)
+        actual = extraction_module.extract_metadata(pdf)
+
+    assert actual.provider == expected_provider
+    assert actual.model == expected_model
